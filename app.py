@@ -369,7 +369,7 @@ class InvestaurPro(tk.Tk):
             ("  PORTFOLIO  ",  self._build_portfolio_tab),
             ("  MARKETS  ",    self._build_markets_tab),
             ("  NEWS  ",       self._build_news_tab),
-            ("  AI INSIGHT  ", self._build_ai_tab),
+            ("  INSIGHT  ", self._build_ai_tab),
             ("  SIMULATOR  ",  self._build_sim_tab),
             ("  DIVIDENDS  ",  self._build_dividends_tab),
             ("  SCREENER  ",   self._build_screener_tab),
@@ -1128,7 +1128,7 @@ class InvestaurPro(tk.Tk):
     def _build_ai_tab(self, tab):
         ctrl = tk.Frame(tab, bg=BG, padx=14, pady=10)
         ctrl.pack(fill="x")
-        tk.Label(ctrl, text="AI TECHNICAL ANALYSIS", fg=ACCENT, bg=BG, font=FONT_TITLE).pack(side="left")
+        tk.Label(ctrl, text="TECHNICAL ANALYSIS", fg=ACCENT, bg=BG, font=FONT_TITLE).pack(side="left")
         self._btn(ctrl, "▶ RUN ANALYSIS", self._run_ai, ACCENT, BG).pack(side="right")
         tk.Label(tab, text="Statistical analysis via technical indicators. NOT financial advice.",
                  fg=FG_DIM, bg=BG, font=("Consolas", 9), padx=14).pack(anchor="w", pady=(0, 6))
@@ -1768,6 +1768,7 @@ def main():
     import sys
     try:
         app = InvestaurPro()
+        
         app.update()  # Process pending events so window is fully drawn
         app.mainloop()
     except Exception as e:
