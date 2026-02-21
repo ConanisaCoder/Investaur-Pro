@@ -84,6 +84,9 @@ class InvestaurPro(tk.Tk):
         s.map("Treeview", background=[("selected", BORDER)])
         s.configure("Vertical.TScrollbar", background=PANEL, troughcolor=BG,
                     borderwidth=0, arrowcolor=FG_DIM)
+        s.configure("TCombobox", fieldbackground=CARD, background=PANEL, foreground=FG,
+                    arrowcolor=ACCENT, bordercolor=BORDER)
+        s.map("TCombobox", fieldbackground=[("readonly", CARD)], background=[("active", PANEL)])
 
     # ── LAYOUT ──────────────────────────────────────
     def _build_layout(self):
@@ -167,7 +170,13 @@ class InvestaurPro(tk.Tk):
         self._refresh_watchlist_ui()
 
     def _load_symbol(self, sym):
+        sym = sym.strip().upper()
+        if not sym:
+            return
         self.current_sym.set(sym)
+        if hasattr(self, "search_entry") and self.search_entry.winfo_exists():
+            self.search_entry.delete(0, "end")
+            self.search_entry.insert(0, sym)
         self.run_analysis("6M")
         self.notebook.select(0)
 
@@ -205,7 +214,7 @@ class InvestaurPro(tk.Tk):
             if self._loading:
                 self.after(REFRESH_ANALYSIS_MS, refresh_analysis_price)
                 return
-            sym = self.current_sym.get().strip().upper()
+            sym = self._get_current_ticker()
             if sym and hasattr(self, "lbl_price") and self.lbl_price.winfo_exists():
 
                 def _fetch():
@@ -239,7 +248,17 @@ class InvestaurPro(tk.Tk):
                 pass
             self.after(REFRESH_MARKETS_MS, lambda: threading.Thread(target=refresh_markets_if_visible, daemon=True).start())
 
+        def refresh_simulator_if_visible():
+            try:
+                idx = self.notebook.index(self.notebook.select())
+                if idx == 6 and hasattr(self, "sim_port_lbl") and self.sim_port_lbl.winfo_exists():
+                    self.after(0, self._sim_update_value)
+            except Exception:
+                pass
+            self.after(REFRESH_PORTFOLIO_MS, lambda: threading.Thread(target=refresh_simulator_if_visible, daemon=True).start())
+
         self.after(REFRESH_PORTFOLIO_MS, lambda: threading.Thread(target=refresh_portfolio_sidebar, daemon=True).start())
+        self.after(REFRESH_PORTFOLIO_MS, lambda: threading.Thread(target=refresh_simulator_if_visible, daemon=True).start())
         self.after(REFRESH_ANALYSIS_MS, refresh_analysis_price)
         self.after(REFRESH_MARKETS_MS, lambda: threading.Thread(target=refresh_markets_if_visible, daemon=True).start())
 
@@ -257,23 +276,50 @@ class InvestaurPro(tk.Tk):
         search_inner = tk.Frame(search_outer, bg=PANEL, padx=10, pady=5)
         search_inner.pack()
         tk.Label(search_inner, text="⌕ ", fg=FG_DIM, bg=PANEL, font=("Helvetica", 13)).pack(side="left")
-        self.search_entry = styled_entry(search_inner, textvariable=self.current_sym,
-                                         font=("Consolas", 13), bg=PANEL, fg=FG,
-                                         insertbackground=ACCENT, borderwidth=0, width=12)
+        self._update_ticker_combo_values()
+        self.search_entry = ttk.Combobox(search_inner, textvariable=self.current_sym,
+                                         font=("Consolas", 13), width=12, state="normal")
+        self.search_entry["values"] = self._ticker_combo_values
         self.search_entry.pack(side="left")
-        self.search_entry.bind("<Return>", lambda e: self.run_analysis("6M"))
+        self.search_entry.bind("<Return>", lambda e: self._on_ticker_analyze())
+        self.search_entry.bind("<<ComboboxSelected>>", lambda e: self._on_ticker_analyze())
 
-        self._btn(hf, "ANALYZE",    lambda: self.run_analysis("6M"),      ACCENT, BG).pack(side="left", padx=(0, 6))
+        self._btn(hf, "ANALYZE",    self._on_ticker_analyze,              ACCENT, BG).pack(side="left", padx=(0, 6))
         self._btn(hf, "+ WATCHLIST", self._add_current_to_wl,             PANEL,  FG).pack(side="left", padx=3)
-        self._btn(hf, "COMPANY",    lambda: [self.notebook.select(1), self._load_company_info(self.current_sym.get())], PANEL, BLUE).pack(side="left", padx=3)
+        self._btn(hf, "COMPANY",    lambda: [self.notebook.select(1), self._load_company_info(self._get_current_ticker())], PANEL, BLUE).pack(side="left", padx=3)
 
         self.status_var = tk.StringVar(value="Ready.")
         tk.Label(hf, textvariable=self.status_var, fg=FG_DIM, bg=BG,
                  font=("Consolas", 9)).pack(side="left", padx=14)
 
+    def _update_ticker_combo_values(self):
+        common = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AMD", "NFLX", "SPY", "QQQ", "BTC-USD"]
+        self._ticker_combo_values = list(dict.fromkeys(
+            common + [s for s in self.watchlist.symbols if s not in common]
+        ))
+
+    def _get_current_ticker(self):
+        """Read ticker from combobox/entry directly to avoid sync issues."""
+        try:
+            val = self.search_entry.get().strip().upper()
+            return val if val else self.current_sym.get().strip().upper()
+        except AttributeError:
+            return self.current_sym.get().strip().upper()
+
+    def _on_ticker_analyze(self, event=None):
+        sym = self._get_current_ticker()
+        if sym:
+            self.current_sym.set(sym)
+            self.run_analysis("6M")
+
     def _add_current_to_wl(self):
-        sym = self.current_sym.get().upper()
+        sym = self._get_current_ticker()
+        if not sym:
+            return
         self.watchlist.add(sym)
+        self._update_ticker_combo_values()
+        if hasattr(self, "search_entry") and self.search_entry.winfo_exists():
+            self.search_entry["values"] = self._ticker_combo_values
         self._refresh_watchlist_ui()
         self.status_var.set(f"Added {sym} to watchlist.")
 
@@ -389,7 +435,7 @@ class InvestaurPro(tk.Tk):
         divider(rpad)
 
         self._btn(rpad, "+ ADD TO PORTFOLIO", self._quick_add_to_portfolio, BORDER, ACCENT).pack(fill="x", pady=2)
-        self._btn(rpad, "VIEW COMPANY PROFILE", lambda: [self.notebook.select(1), self._load_company_info(self.current_sym.get())], BORDER, BLUE).pack(fill="x", pady=2)
+        self._btn(rpad, "VIEW COMPANY PROFILE", lambda: [self.notebook.select(1), self._load_company_info(self._get_current_ticker())], BORDER, BLUE).pack(fill="x", pady=2)
 
     def _highlight_range(self, active):
         for r, b in self._range_btns.items():
@@ -399,7 +445,7 @@ class InvestaurPro(tk.Tk):
     def run_analysis(self, r="6M"):
         if self._loading:
             return
-        sym = self.current_sym.get().strip().upper()
+        sym = self._get_current_ticker()
         if not sym:
             return
         self._last_range = r
@@ -582,19 +628,11 @@ class InvestaurPro(tk.Tk):
             c.grid(row=0, column=i, padx=3, pady=3, sticky="nsew")
             stats_row.columnconfigure(i, weight=1)
 
-        # Mission
-        mc = tk.Frame(self.company_inner, bg=CARD, padx=22, pady=18)
-        mc.pack(fill="x", pady=(0, 8))
-        tk.Label(mc, text="⚡  MISSION", fg=ACCENT2, bg=CARD, font=FONT_SMALL).pack(anchor="w")
-        mission = info.get("longBusinessSummary","")[:160] or offline.get("mission","N/A")
-        tk.Label(mc, text=f'"{mission}"', fg=FG, bg=CARD,
-                 font=("Courier", 11, "italic"), wraplength=1000, justify="left").pack(anchor="w", pady=(8, 0))
-
         # About
         sc = tk.Frame(self.company_inner, bg=CARD, padx=22, pady=18)
         sc.pack(fill="x", pady=(0, 8))
         tk.Label(sc, text="📋  ABOUT", fg=BLUE, bg=CARD, font=FONT_SMALL).pack(anchor="w")
-        summary = info.get("longBusinessSummary") or offline.get("summary","No info available.")
+        summary = info.get("longBusinessSummary") or offline.get("summary", "No info available.")
         tk.Label(sc, text=summary, fg=FG, bg=CARD,
                  font=("Consolas", 10), wraplength=1060, justify="left").pack(anchor="w", pady=(8, 0))
 
@@ -825,7 +863,7 @@ class InvestaurPro(tk.Tk):
             self._refresh_portfolio()
 
     def _quick_add_to_portfolio(self):
-        sym = self.current_sym.get().upper()
+        sym = self._get_current_ticker()
         dlg = tk.Toplevel(self)
         dlg.title(f"Add {sym}")
         dlg.geometry("340x220")
@@ -1280,10 +1318,14 @@ class InvestaurPro(tk.Tk):
 
         tk.Label(left, text="PAPER TRADING", fg=ACCENT, bg=BG, font=FONT_TITLE).pack(anchor="w", pady=(0, 10))
 
-        self.sim_cash_lbl = tk.Label(left, text=f"CASH:  ${self.simulator.cash:,.2f}",
-                                      fg=POS, bg=BG, font=("Consolas", 15, "bold"))
-        self.sim_cash_lbl.pack(anchor="w")
-        self.sim_port_lbl = tk.Label(left, text="TOTAL VALUE:  —", fg=FG, bg=BG, font=("Consolas", 11))
+        cash_row = tk.Frame(left, bg=BG)
+        cash_row.pack(anchor="w")
+        self.sim_cash_lbl = tk.Label(cash_row, text=f"Current Cash Balance:  ${self.simulator.cash:,.2f}",
+                                      fg=POS, bg=BG, font=("Consolas", 13, "bold"), cursor="hand2")
+        self.sim_cash_lbl.pack(side="left")
+        self.sim_cash_lbl.bind("<Button-1>", lambda e: self._sim_edit_cash())
+        self._btn(cash_row, "EDIT", self._sim_edit_cash, BORDER, ACCENT).pack(side="left", padx=(8, 0))
+        self.sim_port_lbl = tk.Label(left, text="Total Value of Assets:  —", fg=FG, bg=BG, font=("Consolas", 11))
         self.sim_port_lbl.pack(anchor="w", pady=(2, 4))
         self.sim_pnl_lbl  = tk.Label(left, text="P&L:  —", fg=FG_DIM, bg=BG, font=("Consolas", 11))
         self.sim_pnl_lbl.pack(anchor="w", pady=(0, 8))
@@ -1344,6 +1386,40 @@ class InvestaurPro(tk.Tk):
         self.sim_log.tag_configure("ts",   foreground=FG_DIM)
         self.sim_log.tag_configure("fail", foreground=NEG)
 
+        self._sim_refresh_values()
+
+    def _sim_edit_cash(self):
+        dlg = tk.Toplevel(self)
+        dlg.title("Edit Cash Balance")
+        dlg.geometry("320x140")
+        dlg.configure(bg=PANEL)
+        dlg.grab_set()
+        tk.Label(dlg, text="CURRENT CASH BALANCE", fg=ACCENT, bg=PANEL, font=FONT_TITLE).pack(pady=(18, 10))
+        e = styled_entry(dlg, font=("Consolas", 12), bg=CARD, fg=FG, insertbackground=ACCENT, width=16)
+        e.pack(pady=6)
+        e.insert(0, f"{self.simulator.cash:,.2f}")
+        e.select_range(0, "end")
+        e.focus_set()
+        def ok():
+            try:
+                val = float(e.get().replace(",", ""))
+                if val < 0:
+                    raise ValueError("Cash cannot be negative.")
+                self.simulator.cash = val
+                dlg.destroy()
+                self.sim_cash_lbl.config(text=f"Current Cash Balance:  ${self.simulator.cash:,.2f}")
+                self._sim_refresh_values()
+                self.status_var.set(f"Cash updated to ${self.simulator.cash:,.2f}")
+            except (ValueError, TypeError):
+                messagebox.showerror("Invalid", "Enter a valid positive number.", parent=dlg)
+        self._btn(dlg, "UPDATE", ok, ACCENT, BG).pack(pady=12)
+        dlg.bind("<Return>", lambda ev: ok())
+
+    def _sim_refresh_values(self):
+        """Update cash display and trigger full value refresh."""
+        self.sim_cash_lbl.config(text=f"Current Cash Balance:  ${self.simulator.cash:,.2f}")
+        self._sim_update_value()
+
     def _sim_trade(self, action):
         t = self.sim_ticker.get().strip().upper()
         try:
@@ -1376,14 +1452,12 @@ class InvestaurPro(tk.Tk):
         self.sim_log.insert("1.0", msg + "\n", tag)
         self.sim_log.insert("1.0", f"[{ts}]  ", "ts")
         self.sim_log.config(state="disabled")
-        self.sim_cash_lbl.config(text=f"CASH:  ${self.simulator.cash:,.2f}")
+        self.sim_cash_lbl.config(text=f"Current Cash Balance:  ${self.simulator.cash:,.2f}")
         self._sim_update_positions()
         if not ok:
             messagebox.showwarning("Trade Failed", msg)
         self.status_var.set(msg)
-        self._sim_value_history.append(self.simulator.cash)
-        self._sim_time_history.append(datetime.now())
-        self._sim_update_chart()
+        self._sim_update_value()
 
     def _sim_update_positions(self):
         for w in self.sim_pos_frame.winfo_children():
@@ -1408,8 +1482,8 @@ class InvestaurPro(tk.Tk):
         sign = "+" if pnl >= 0 else ""
         pc   = POS if pnl >= 0 else NEG
         self.after(0, lambda: [
-            self.sim_port_lbl.config(text=f"TOTAL VALUE:  ${val:,.2f}",
-                                      fg=POS if val>=self.simulator.start_cash else NEG),
+            self.sim_port_lbl.config(text=f"Total Value of Assets:  ${val:,.2f}",
+                                      fg=POS if val >= self.simulator.start_cash else NEG),
             self.sim_pnl_lbl.config(text=f"P&L:  {sign}${abs(pnl):,.2f}  ({sign}{pnl/self.simulator.start_cash*100:.2f}%)",
                                      fg=pc)
         ])
@@ -1434,9 +1508,9 @@ class InvestaurPro(tk.Tk):
             self.simulator = SimulatorState()
             self._sim_value_history = [self.simulator.cash]
             self._sim_time_history  = [datetime.now()]
-            self.sim_cash_lbl.config(text=f"CASH:  ${self.simulator.cash:,.2f}")
+            self.sim_cash_lbl.config(text=f"Current Cash Balance:  ${self.simulator.cash:,.2f}")
             self.sim_pnl_lbl.config(text="P&L:  $0.00")
-            self.sim_port_lbl.config(text="TOTAL VALUE:  —")
+            self.sim_port_lbl.config(text="Total Value of Assets:  —")
             self.sim_log.config(state="normal")
             self.sim_log.delete("1.0", "end")
             self.sim_log.config(state="disabled")
