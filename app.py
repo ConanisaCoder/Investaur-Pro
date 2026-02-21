@@ -40,8 +40,8 @@ class InvestaurPro(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("INVESTAUR PRO  ·  Professional Trading Terminal")
-        self.geometry("1600x960")
-        self.minsize(1200, 720)
+        self.geometry("1400x850")
+        self.minsize(1000, 600)
         self.configure(bg=BG)
 
         self.portfolio   = PortfolioState()
@@ -210,21 +210,33 @@ class InvestaurPro(tk.Tk):
                 pass
             self.after(REFRESH_PORTFOLIO_MS, lambda: threading.Thread(target=refresh_portfolio_sidebar, daemon=True).start())
 
+        PERIOD_MAP = {"1D": ("1d","5m"), "5D": ("5d","15m"), "1M": ("1mo","1h"),
+                      "3M": ("3mo","1d"), "6M": ("6mo","1d"), "1Y": ("1y","1d"),
+                      "5Y": ("5y","1wk"), "MAX": ("max","1mo")}
         def refresh_analysis_price():
             if self._loading:
                 self.after(REFRESH_ANALYSIS_MS, refresh_analysis_price)
                 return
             sym = self._get_current_ticker()
+            r = getattr(self, "_last_range", "6M")
+            period, _ = PERIOD_MAP.get(r, ("6mo", "1d"))
             if sym and hasattr(self, "lbl_price") and self.lbl_price.winfo_exists():
 
                 def _fetch():
                     try:
-                        d = yf.Ticker(sym).history(period="5d")
-                        if not d.empty and len(d) >= 2:
-                            curr = float(d["Close"].iloc[-1])
-                            prev = float(d["Close"].iloc[-2])
-                            chg = curr - prev
-                            chg_pct = (chg / prev * 100) if prev else 0
+                        t = yf.Ticker(sym)
+                        d = t.history(period=period)
+                        info = t.info
+                        if not d.empty and len(d) >= 1:
+                            start_price = float(d["Close"].iloc[0])
+                            hist_last = float(d["Close"].iloc[-1])
+                            curr = info.get("regularMarketPrice") or info.get("currentPrice")
+                            if curr is None or not isinstance(curr, (int, float)):
+                                curr = hist_last
+                            else:
+                                curr = float(curr)
+                            chg = curr - start_price
+                            chg_pct = (chg / start_price * 100) if start_price and start_price != 0 else 0
                             color_line = POS if chg >= 0 else NEG
                             sign = "+" if chg >= 0 else ""
                             self.after(0, lambda: [
@@ -463,7 +475,7 @@ class InvestaurPro(tk.Tk):
         period, interval = mapping.get(r, ("6mo", "1d"))
         try:
             t = yf.Ticker(sym)
-            hist = t.history(period=period, interval=interval)
+            hist = t.history(period=period, interval=interval, auto_adjust=True)
             info = t.info
             if hist.empty:
                 raise ValueError("No price data returned.")
@@ -473,10 +485,15 @@ class InvestaurPro(tk.Tk):
 
     def _render_analysis(self, sym, hist, info, r):
         self._loading = False
-        curr = float(hist["Close"].iloc[-1])
-        prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-        chg = curr - prev
-        chg_pct = (chg / prev * 100) if prev else 0
+        start_price = float(hist["Close"].iloc[0]) if len(hist) > 1 else float(hist["Close"].iloc[-1])
+        hist_last = float(hist["Close"].iloc[-1])
+        curr = info.get("regularMarketPrice") or info.get("currentPrice")
+        if curr is None or not isinstance(curr, (int, float)):
+            curr = hist_last
+        else:
+            curr = float(curr)
+        chg = curr - start_price
+        chg_pct = (chg / start_price * 100) if start_price and start_price != 0 else 0
         color_line = POS if chg >= 0 else NEG
 
         self.lbl_name.config(text=info.get("longName") or info.get("shortName") or sym)
@@ -1746,3 +1763,20 @@ class InvestaurPro(tk.Tk):
         sel = self.screen_tree.selection()
         if sel:
             self._load_symbol(self.screen_tree.item(sel[0])["values"][0])
+
+def main():
+    import sys
+    try:
+        app = InvestaurPro()
+        app.update()  # Process pending events so window is fully drawn
+        app.mainloop()
+    except Exception as e:
+        if "display" in str(e).lower() or "DISPLAY" in str(e):
+            print("Display error: Cannot open GUI.", file=sys.stderr)
+            print("  - On Linux/WSL: ensure DISPLAY is set (e.g. export DISPLAY=:0)", file=sys.stderr)
+            print("  - On WSL2: use WSLg or install an X server.", file=sys.stderr)
+        raise
+
+
+if __name__ == "__main__":
+    main()
